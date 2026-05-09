@@ -28,6 +28,15 @@ class Settings(BaseSettings):
     sol_mint: str = "So11111111111111111111111111111111111111112"
     usdc_mint: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 
+    # Ika dWallet
+    ika_grpc_url: str = "pre-alpha-dev-1.ika.ika-network.net:443"
+    ika_program_id: str = "87W54kGYFQ1rgWqMeu4XTPHWXWmXSQCcjm8vCTfiq1oY"
+    dwallet_address: str = ""
+
+    # Encrypt FHE
+    encrypt_grpc_url: str = "pre-alpha-dev-1.encrypt.ika-network.net:443"
+    encrypt_program_id: str = "4ebfzWdKnrnGseuQpezXdG8yCdHqwQ1SSBHD3bWArND8"
+
     # Market Data
     birdeye_api_key: str = ""
 
