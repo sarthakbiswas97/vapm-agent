@@ -325,19 +325,68 @@ class TradeExecutorService:
         position_size_pct: float = BASE_POSITION_SIZE_PCT,
     ) -> TradeResult:
         """
-        Execute the trade with optional on-chain logging.
+        Execute the trade with on-chain risk enforcement.
 
         Flow:
         1. Compute decision hash
-        2. Log decision hash on-chain (if blockchain enabled)
-        3. Execute trade (simulated position update)
-        4. Mark decision as executed on-chain
-        5. Save to PostgreSQL
-        6. Update equity tracking for drawdown management
+        2. Request on-chain trade approval (risk limit check)
+        3. Log decision hash on-chain (if blockchain enabled)
+        4. Execute trade (simulated position update)
+        5. Mark decision as executed on-chain
+        6. Save to PostgreSQL
+        7. Update equity tracking for drawdown management
         """
         action = decision.strategy_decision.action
         decision_hash = decision.compute_hash()
         decision.trade_intent_hash = decision_hash
+
+        # ─────────────────────────────────────────────────────────────
+        # STEP 0: On-chain risk enforcement (dWallet guardrails)
+        # ─────────────────────────────────────────────────────────────
+        if blockchain_client.is_enabled:
+            try:
+                position_bps = int(position_size_pct * 10000)
+                exposure_bps = int(
+                    (position_manager.position.value_usd / position_manager.capital * 10000)
+                    if position_manager.has_position else 0
+                )
+                daily_pnl_bps = int(abs(risk_guardian.state.daily_pnl_pct) * 10000)
+                drawdown_bps = int(risk_guardian.state.current_drawdown_pct * 10000)
+
+                hash_bytes = bytes.fromhex(
+                    decision_hash[2:] if decision_hash.startswith("0x") else decision_hash
+                )
+
+                approval = await blockchain_client.approve_trade(
+                    position_size_bps=position_bps,
+                    current_exposure_bps=exposure_bps,
+                    daily_pnl_bps=daily_pnl_bps,
+                    current_drawdown_bps=drawdown_bps,
+                    message_hash=hash_bytes,
+                )
+
+                if not approval.success:
+                    # Trade rejected by on-chain risk limits
+                    await blockchain_client.reject_trade(
+                        position_size_bps=position_bps,
+                        daily_pnl_bps=daily_pnl_bps,
+                        current_drawdown_bps=drawdown_bps,
+                        reason=approval.error or "On-chain risk check failed",
+                    )
+                    print(f"  [Guardrail] REJECTED: {approval.error}")
+                    return TradeResult(
+                        success=False,
+                        trade_id=None,
+                        decision_id=decision.id,
+                        action=action.value,
+                        amount=0.0,
+                        price=price,
+                        reason=f"On-chain risk rejection: {approval.error}",
+                    )
+
+                print(f"  [Guardrail] Approved: pos={position_bps}bps, dd={drawdown_bps}bps")
+            except Exception as e:
+                print(f"  [Guardrail] Check error (proceeding): {e}")
 
         # ─────────────────────────────────────────────────────────────
         # STEP 1: Log decision hash on-chain (before execution)
