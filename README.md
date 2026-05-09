@@ -1,36 +1,82 @@
 # VAPM - Verifiable AI Portfolio Manager
 
-> An autonomous AI trading agent with on-chain verifiable decisions on Solana.
+> An autonomous AI trading agent with **encrypted strategy** (Encrypt FHE) and **cryptographically enforced risk limits** (Ika dWallet) on Solana.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## Overview
+## The Problem
 
-VAPM is a trustless AI trading system that combines machine learning prediction with blockchain-based verification. Every trading decision is logged, hashed, and stored on-chain via a Solana program, enabling anyone to verify the agent's behavior.
+AI trading agents have two critical vulnerabilities:
 
-### Key Features
+1. **Front-running**: Trading signals are visible on-chain. Anyone can read the agent's prediction and trade ahead of it.
+2. **Bypassable guardrails**: Risk limits are enforced in software. A malicious operator can modify the code and bypass position size limits, loss caps, or drawdown protection.
 
-- **ML-Powered Trading**: XGBoost model predicting SOL/USDC price movements
-- **Explainable Decisions**: SHAP values reveal why each trade was made
-- **On-Chain Verification**: Decision hashes stored on Solana for transparency
-- **Risk Management**: Hard limits on position size, daily loss, and drawdown
-- **Jupiter Aggregator**: Best-price execution across all Solana DEXes
+## The Solution
 
-## Architecture
+VAPM uses two new Solana primitives to solve both problems:
+
+- **Encrypt (FHE)**: The agent's confidence scores and risk metrics are encrypted using Fully Homomorphic Encryption before on-chain storage. Nobody can read the trading signals -- not validators, not indexers, not competing traders.
+
+- **Ika (dWallet)**: The agent's trading wallet is a distributed MPC key controlled by an on-chain program. Risk limits are stored on-chain and checked before every trade. The dWallet **physically cannot sign** a transaction that violates risk limits -- not even the agent operator can bypass them.
+
+## How It Works
 
 ```
-+----------------------------------------------------------+
-|                    VAPM System                            |
-+----------------------------------------------------------+
-|  Market Data -> Feature Engine -> ML Model -> Strategy    |
-|       (Birdeye/Jupiter)                       |           |
-|  Solana <- Trade Executor <- Risk Guardian <--+           |
-|    |              |                                       |
-|    |         Jupiter API (swap execution)                 |
-|    v                                                      |
-|  Decision PDA (on-chain hash proofs)                      |
-+----------------------------------------------------------+
+                          VAPM Architecture
++----------------------------------------------------------------+
+|                                                                |
+|  Market Data -> Feature Engine -> XGBoost ML -> Strategy       |
+|  (Birdeye/Jupiter)                                |            |
+|                                                   v            |
+|                                          [Encrypt FHE]         |
+|                                          Confidence + risk     |
+|                                          scores encrypted      |
+|                                                   |            |
+|                                                   v            |
+|  +------------------------------------------+                  |
+|  |     On-Chain Risk Enforcement (Anchor)    |                  |
+|  |  position_size <= max_position_bps?       |                  |
+|  |  daily_loss    <= max_daily_loss_bps?      |                  |
+|  |  drawdown     <= max_drawdown_bps?         |                  |
+|  +------------------------------------------+                  |
+|           |                          |                          |
+|         PASS                       FAIL                         |
+|           |                          |                          |
+|    [Ika dWallet]              [TradeRejected]                   |
+|    approve_message             event emitted                    |
+|    MPC signing                 trade blocked                    |
+|           |                                                     |
+|           v                                                     |
+|    Jupiter Aggregator                                           |
+|    SOL/USDC swap                                                |
++----------------------------------------------------------------+
 ```
+
+## How VAPM Uses Encrypt
+
+Encrypt enables smart contracts to **compute on encrypted data** without decrypting it. VAPM uses this to keep trading signals private:
+
+1. Before logging a decision on-chain, the agent encrypts `confidence` and `risk_score` via Encrypt's gRPC API
+2. Encrypted ciphertext accounts are created on Solana (owned by the Encrypt program)
+3. The on-chain decision record stores references to ciphertext accounts, not plaintext values
+4. FHE computation graphs (`check_position_limit`, `update_cumulative_pnl`) can run risk checks on encrypted data
+5. Only aggregate performance metrics (total PnL, win rate) are ever decrypted -- individual signals remain private
+
+**Result**: The agent's alpha is protected. Observers see that a decision was made but cannot determine the direction or confidence.
+
+## How VAPM Uses Ika
+
+Ika provides **dWallets** -- distributed signing keys controlled by Solana programs via 2PC-MPC. VAPM uses this for unbypassable risk enforcement:
+
+1. A dWallet is created for the agent (Curve25519 for Solana-native signing)
+2. The dWallet's authority is transferred to the VAPM program's CPI authority PDA
+3. When the agent wants to trade, it calls the `approve_trade` instruction
+4. The on-chain program checks risk limits stored in the `AgentState` PDA
+5. Only if ALL limits pass, the program CPI-calls `approve_message` on the dWallet
+6. The Ika network produces the signature via 2PC-MPC
+7. The signed transaction is broadcast to execute the swap
+
+**Result**: Risk limits are cryptographic, not just software. The dWallet won't sign without program approval.
 
 ## Tech Stack
 
@@ -40,8 +86,9 @@ VAPM is a trustless AI trading system that combines machine learning prediction 
 | Backend | Python 3.11, FastAPI |
 | Database | PostgreSQL + TimescaleDB, Redis |
 | Blockchain | Anchor (Rust), solana-py, solders |
+| Privacy | Encrypt FHE (`encrypt-anchor`) |
+| Custody | Ika dWallet (`ika-dwallet-anchor`) |
 | DEX | Jupiter Aggregator API |
-| Frontend | Next.js 14, Tailwind |
 
 ## Quick Start
 
@@ -49,146 +96,99 @@ VAPM is a trustless AI trading system that combines machine learning prediction 
 
 - Python 3.11+
 - Docker & Docker Compose
-- Solana CLI + Anchor CLI (for program deployment)
-- Solana Devnet SOL (free via `solana airdrop`)
+- Solana CLI + Anchor CLI
+- Solana Devnet SOL (`solana airdrop 2`)
 
-### 1. Clone & Setup
+### Setup
 
 ```bash
 git clone https://github.com/yourusername/vapm.git
 cd vapm
 cp .env.example .env
-# Edit .env with your config
-```
 
-### 2. Start Infrastructure
-
-```bash
+# Infrastructure
 docker-compose up -d postgres redis
-```
 
-### 3. Install Dependencies
-
-```bash
+# Python deps
 pip install -r requirements.txt
-```
 
-### 4. Setup Solana Wallet
-
-```bash
+# Solana wallet
 solana-keygen new -o ~/.config/solana/id.json
 solana config set --url devnet
 solana airdrop 2
-```
 
-### 5. Deploy Solana Program
-
-```bash
-anchor build
-anchor deploy
+# Deploy program
+anchor build && anchor deploy
 # Copy program ID to .env as DECISION_PROGRAM_ID
+
+# Optional: setup dWallet
+python scripts/setup_dwallet.py
+
+# Run
+cd backend && python -m uvicorn main:app --reload
 ```
 
-### 6. Run the Agent
-
-```bash
-cd backend
-python -m uvicorn main:app --reload
-```
-
-## Solana Program
+## On-Chain Program
 
 ### vapm_decisions (Anchor/Rust)
 
-A single on-chain program (~80 lines) that provides:
+| Instruction | Purpose |
+|-------------|---------|
+| `initialize_agent` | Create agent PDA with on-chain risk limits |
+| `set_risk_limits` | Update max position/loss/drawdown (authority-only) |
+| `set_dwallet` | Link a dWallet for MPC custody |
+| `approve_trade` | Check risk limits, approve via dWallet CPI if configured |
+| `reject_trade` | Log rejection for audit trail |
+| `log_decision` | Store decision hash on-chain |
+| `mark_executed` | Flag decision as executed |
 
-- **AgentState PDA**: Agent identity with name and decision counter
-- **DecisionRecord PDA**: SHA256 hash, model confidence, risk score, execution status
-- **Instructions**: `initialize_agent`, `log_decision`, `mark_executed`
-
-Decision hashes are stored on-chain; full decision data stays off-chain in PostgreSQL.
-
-## Trade Execution
-
-Trades are executed via Jupiter Aggregator API:
-1. Agent calls Jupiter `/order` endpoint with swap parameters
-2. Jupiter returns an assembled transaction
-3. Agent signs with Ed25519 keypair and submits via `/execute`
-4. Jupiter handles routing across all Solana DEXes for best price
-
-No on-chain swap code needed.
-
-## Decision Transparency
-
-Every trade generates a Decision Record:
-
-```json
-{
-  "timestamp": "2026-05-10T14:02:00Z",
-  "market_state": {
-    "price": 165.50,
-    "rsi": 28.4,
-    "volatility": 0.032
-  },
-  "model_output": {
-    "probability_up": 0.72,
-    "shap_values": {"rsi": 0.12, "volume": 0.08}
-  },
-  "strategy_decision": {
-    "action": "BUY",
-    "reason": "RSI oversold + high confidence"
-  },
-  "risk_validation": {
-    "checks_passed": true,
-    "risk_score": 0.31
-  }
-}
-```
-
-The SHA256 hash of this record is stored on-chain via the Anchor program.
-
-## Risk Management
-
-Hard limits that cannot be bypassed:
-
-| Limit | Value |
-|-------|-------|
-| Max Position Size | 5% of capital |
-| Max Daily Loss | 3% of capital |
-| Max Drawdown | 10% of capital |
-| Min Trade Interval | 60 seconds |
+Risk limits stored on-chain (basis points):
+- `max_position_bps` (default: 500 = 5%)
+- `max_daily_loss_bps` (default: 300 = 3%)
+- `max_drawdown_bps` (default: 1000 = 10%)
 
 ## API Endpoints
 
 ```
-GET  /health                 # System health
-GET  /agent/status           # Agent state, PnL
-GET  /market/price           # Current SOL/USDC price
-GET  /market/candles         # OHLCV candles
-GET  /predict                # ML prediction with SHAP
-GET  /trades/position        # Current position
-GET  /trades/history         # Trade history
-GET  /risk/state             # Risk metrics
-GET  /agent/onchain          # Solana identity and decisions
-POST /agent/register         # Register agent on-chain
-GET  /verify/{decision_id}   # Verify decision hash
+GET  /health                  # System health
+GET  /agent/status            # Agent state, PnL
+GET  /agent/onchain           # Solana identity and decisions
+GET  /agent/dwallet           # dWallet custody status + risk limits
+GET  /agent/encrypt           # Encrypt FHE status + encrypted decisions
+GET  /market/price            # Current SOL/USDC price
+GET  /predict                 # ML prediction with SHAP
+GET  /trades/position         # Current position
+GET  /risk/state              # Risk metrics
+POST /agent/register          # Register agent on-chain
+GET  /verify/{decision_id}    # Verify decision hash
 ```
 
 ## Project Structure
 
 ```
 vapm/
-+-- programs/             # Anchor/Rust Solana program
-|   +-- vapm_decisions/   # Decision hash storage
-+-- backend/              # Python FastAPI backend
-|   +-- models/           # Pydantic data models
-|   +-- services/         # Business logic
-|   +-- core/             # Technical indicators
-|   +-- db/               # PostgreSQL models
-|   +-- events/           # Redis pub/sub
-+-- ml/                   # ML training & inference
-+-- frontend/             # Next.js dashboard
++-- programs/vapm_decisions/     # Anchor program
+|   +-- src/lib.rs               # Risk limits, approve_trade, Ika CPI
+|   +-- src/encrypt_fns.rs       # FHE computation graphs
++-- backend/
+|   +-- services/
+|   |   +-- trade_executor.py    # Trading orchestrator
+|   |   +-- blockchain_client.py # Solana + Jupiter integration
+|   |   +-- dwallet_client.py    # Ika dWallet management
+|   |   +-- encrypt_client.py    # Encrypt FHE privacy
+|   |   +-- risk_guardian.py     # Risk management engine
+|   |   +-- prediction_service.py # XGBoost + SHAP
+|   +-- models/                  # Pydantic data models
+|   +-- core/                    # Technical indicators
++-- ml/                          # ML training pipeline
++-- scripts/                     # Setup and utilities
 ```
+
+## Target Users
+
+- **AI Agent Operators**: Need provable, unbypassable risk controls for autonomous trading
+- **Fund Managers**: Want strategy privacy (no front-running) with transparent risk reporting
+- **Institutional DeFi**: Require custody solutions where risk limits are cryptographically enforced
 
 ## License
 
@@ -196,4 +196,4 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ---
 
-Built for the Frontier Hackathon on Superteam Earn.
+Built for the **Frontier Hackathon** (Encrypt + Ika track) on Superteam Earn.

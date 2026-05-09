@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Standalone test script for Trade Executor Service.
-Runs without pytest to avoid web3 plugin conflict.
+Runs without pytest for standalone testing.
 """
 
 import asyncio
