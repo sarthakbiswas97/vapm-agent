@@ -64,6 +64,7 @@ async def lifespan(app: FastAPI):
 
     await trade_executor.stop()
     await market_data_service.stop()
+    await blockchain_client.close()
     await close_db()
 
     print("Shutdown complete")
@@ -336,10 +337,9 @@ async def get_onchain_status():
         info = await blockchain_client.get_agent_info()
         if info:
             agent_info = {
-                "token_id": info.token_id,
+                "pubkey": info.pubkey,
                 "name": info.name,
-                "metadata_uri": info.metadata_uri,
-                "reputation_score": info.reputation_score,
+                "decision_count": info.decision_count,
                 "registered_at": info.registered_at,
                 "active": info.active,
             }
@@ -363,8 +363,7 @@ async def register_agent_onchain(name: str = "VAPM-Alpha", metadata_uri: str = "
         return {
             "success": True,
             "tx_hash": result.tx_hash,
-            "block_number": result.block_number,
-            "gas_used": result.gas_used,
+            "slot": result.slot,
             "note": result.error,  # Contains "Already registered" if applicable
         }
     return {
