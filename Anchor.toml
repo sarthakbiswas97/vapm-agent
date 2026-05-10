@@ -5,10 +5,10 @@ seeds = false
 skip-lint = false
 
 [programs.localnet]
-vapm_decisions = "DEAci1VN41bK8KmQJYYizWXAbudvre1Jhkp5QPLWVgmq"
+vapm_decisions = "6xDo2r8Edvu1MHxwUtqmmzm3Auavf2fokbjGoJHxcMLx"
 
 [programs.devnet]
-vapm_decisions = "DEAci1VN41bK8KmQJYYizWXAbudvre1Jhkp5QPLWVgmq"
+vapm_decisions = "6xDo2r8Edvu1MHxwUtqmmzm3Auavf2fokbjGoJHxcMLx"
 
 [registry]
 url = "https://api.apr.dev"
