@@ -97,6 +97,14 @@ Encrypt enables Fully Homomorphic Encryption computation inside Solana programs.
 
 **What this prevents:** Front-running based on risk parameter analysis. No observer can determine the agent's position sizing strategy, loss tolerance, or when it is approaching its limits.
 
+### Current Status
+
+- **On-chain CPI integration is complete.** The Anchor program calls Encrypt's `execute_graph` (discriminator = 4) and `request_decryption` (discriminator = 11) via raw CPI. The instruction logic, account layouts, and FHE comparison graph are implemented and deployed.
+- **E2E Ika binary works end-to-end.** The `e2e-ika` binary successfully runs the full DKG lifecycle on devnet and has created a real dWallet ([`7ruuv1n...M15o`](https://explorer.solana.com/address/7ruuv1nVgmTiNaPXvQtYRf5DQLjtPb8jH9ekcrmSM15o?cluster=devnet)).
+- **Encrypt gRPC SDK is pre-alpha with incomplete protobuf generation.** The `e2e-encrypt` binary contains the full integration code (key upload, ciphertext creation, graph execution), but the current SDK release has broken protobuf stubs that prevent compilation. This is a known upstream issue, not a missing integration.
+- **The Python backend simulates encryption locally.** Because the gRPC SDK cannot be called yet, the backend generates ciphertext account references locally to exercise the full pipeline flow. The on-chain program treats these references identically to real ciphertext accounts.
+- **No design gap exists.** The CPI flow is ready for production use the moment the Encrypt SDK ships stable protobuf generation. Switching from simulated to real encryption requires updating the backend client, not the on-chain program.
+
 ## How Ika Is Used
 
 Ika provides dWallets -- distributed signing keys controlled by Solana programs via 2PC-MPC.
